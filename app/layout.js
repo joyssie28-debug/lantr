@@ -1,0 +1,3 @@
+import './globals.css';
+export const metadata = {"title":"Joy — A little about me","description":"Meet Joy: cooking, jogging, and work.","icons":{"icon":"data:image/svg+xml,%3Csvg xmlns=\u0027http://www.w3.org/2000/svg\u0027 viewBox=\u00270 0 64 64\u0027%3E%3Crect width=\u002764\u0027 height=\u002764\u0027 rx=\u002716\u0027 fill=\u0027%232338c4\u0027/%3E%3Ctext x=\u002722\u0027 y=\u002746\u0027 font-family=\u0027Arial\u0027 font-size=\u002744\u0027 fill=\u0027white\u0027%3EJ%3C/text%3E%3C/svg%3E"}};
+export default function RootLayout({children}) { return <html lang="en"><body id="top">{children}</body></html>; }
