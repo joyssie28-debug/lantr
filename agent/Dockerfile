@@ -1,0 +1,4 @@
+FROM node:24-alpine
+WORKDIR /app
+COPY package.json server.mjs usage.mjs opportunities.mjs ./
+CMD ["node", "server.mjs"]
