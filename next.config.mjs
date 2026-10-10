@@ -1,2 +1,2 @@
-const nextConfig = { output: 'export', devIndicators: false };
+const nextConfig = { devIndicators: false };
 export default nextConfig;

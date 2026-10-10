@@ -3,3 +3,7 @@ node_modules/
 out/
 .sites-runtime/
 *.log
+
+.vercel
+.env*
+agent/data/

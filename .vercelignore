@@ -1,0 +1,8 @@
+.env*
+**/.env*
+agent/data/
+.sites-runtime/
+node_modules/
+.next/
+.git/
+*.log
