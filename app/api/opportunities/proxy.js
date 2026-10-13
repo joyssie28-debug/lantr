@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
+import { checkPassword } from './auth.js';
 
 const failures=new Map();
 const cookieName='joy_opportunity_job';
@@ -17,6 +18,7 @@ function publicJob(value){
   return {jobId:value.jobId,status:value.status,elapsedMs:Number.isFinite(value.elapsedMs)?Math.max(0,value.elapsedMs):0,error:text(value.error),results:cards(value.results),ruledOut:cards(value.ruledOut),events:(Array.isArray(value.events)?value.events:[]).slice(0,200).map(event=>({type:text(event.type,40),message:text(event.message),query:text(event.query),url:safeLink(event.url),title:text(event.title,200)}))};
 }
 export async function proxyOpportunity(request,action,id){
+  const denied=checkPassword(request);if(denied)return denied;
   const {SITE_PASSWORD:password,AGENT_SECRET:secret,AGENT_URL:agentUrl}=process.env;
   if(!password||password.length<12||password.length>256||!secret||secret.length<12||secret.length>256||!agentUrl)return json(503,{error:'Opportunities is not configured yet.'});
   if(!sameOrigin(request))return json(403,{error:'Request origin is not allowed.'});
