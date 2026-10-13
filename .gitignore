@@ -7,3 +7,6 @@ out/
 .vercel
 .env*
 agent/data/
+supabase/.temp/
+supabase/.branches/
+.supabase/
