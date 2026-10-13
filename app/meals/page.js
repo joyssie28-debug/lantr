@@ -1,69 +1,76 @@
 'use client';
-import { useEffect, useState } from 'react';
+import {useEffect,useState} from 'react';
+import Image from 'next/image';
+import {DEFAULT_MEAL_SETTINGS,normalizeMealSettings,mealSlots,budgetSummary} from '../../agent/meal-settings.mjs';
+import {starterMeals,starterGroceries} from './meal-data';
+import {validPlan} from './plan-state.mjs';
 
-const starterMeals = [
- ['Monday','Overnight oats, bananas and yoghurt','Hummus and salad wraps','Lemon chicken skillet, microwave potatoes and broccoli',45],
- ['Tuesday','Eggs on toast and fruit','Leftover chicken wraps','Beef and vegetable stir-fry with rice',40],
- ['Wednesday','Yoghurt, muesli and berries','Tuna and chickpea salad','Coconut chickpea and spinach curry with rice',40],
- ['Thursday','Porridge with apples','Leftover curry','Fish tacos with cabbage slaw',40],
- ['Friday','Scrambled eggs on toast','Cheese, hummus and salad sandwiches','Quick beef and tomato pasta with green salad',45],
- ['Saturday','Pancakes, yoghurt and fruit','Leftover beef pasta sauce on microwave potatoes','Vegetable pizzas on ready-made bases',45],
- ['Sunday','Eggs and mushrooms on toast','Chickpea couscous bowls','Chicken noodle soup with vegetables',45]
-];
-const starterGroceries = {
- 'Protein':['Chicken — 2.5 kg','Beef strips — 800 g','Beef mince — 1.2 kg','Fish — 1 kg','Eggs — 30','Tuna — 3 cans','Chickpeas — 6 cans'],
- 'Grains':['Oats — 1 kg','Muesli — 500 g','Bread — 3 loaves','Wraps — 20','Small tortillas — 12','Rice — 1 kg','Pasta — 500 g','Couscous — 500 g','Noodles — 300 g','Pizza bases — 4','Flour — 500 g'],
- 'Dairy':['Milk — 5 litres','Plain yoghurt — 2 kg','Cheese — 700 g','Butter'],
- 'Vegetables':['Potatoes — 3 kg','Onions — 1 kg','Carrots — 1 kg','Broccoli — 2 heads','Capsicums — 6','Cabbage — 1','Spinach — 500 g','Lettuce — 3','Cucumbers — 2','Tomatoes — 1 kg','Mushrooms — 500 g','Garlic and ginger'],
- 'Fruit':['Bananas — 12','Apples — 12','Oranges — 8','Frozen berries — 1 kg','Lemons or limes — 4'],
- 'Pantry':['Hummus — 500 g','Canned tomatoes — 4 cans','Coconut milk — 2 cans','Stock','Tomato paste','Oil','Soy sauce','Curry spices','Baking powder']
-};
-const key = 'joy-shopping-v1';
-const planKey = 'joy-ai-plan-v1';
-
-function validPlan(plan) {
- try {
-  if (!plan || !Array.isArray(plan.days) || plan.days.length !== 7 || !Array.isArray(plan.shopping) || !plan.shopping.length || !Array.isArray(plan.prepNotes) || !plan.prepNotes.every(x => typeof x === 'string')) return false;
-  for (let i=0;i<7;i++) {
-   const day=plan.days[i]; if (day.day!==starterMeals[i][0]) return false;
-   let minutes=0;
-   for (const slot of ['breakfast','lunch','dinner']) { const meal=day[slot]; if (!meal || typeof meal.title!=='string' || !Number.isInteger(meal.activeMinutes) || meal.activeMinutes<0 || !Array.isArray(meal.steps) || !meal.steps.length || !meal.steps.every(x=>typeof x==='string') || !Array.isArray(meal.ingredients) || !meal.ingredients.length || !meal.ingredients.every(x=>typeof x==='string')) return false; minutes+=meal.activeMinutes; }
-   if (minutes>45) return false;
-  }
-  let total=0;
-  for (const group of plan.shopping) { if (typeof group.category!=='string' || !Array.isArray(group.items) || !group.items.length) return false; for (const item of group.items) { if (typeof item.name!=='string' || typeof item.quantity!=='string' || !Number.isFinite(item.estimatedNZD) || item.estimatedNZD<0) return false; total+=item.estimatedNZD; } }
-  return total<=500 && Number.isFinite(plan.estimatedTotalNZD) && Math.abs(total-plan.estimatedTotalNZD)<0.02;
- } catch { return false; }
-}
+const checklistKey='joy-shopping-v1',planKey='joy-ai-plan-v1',settingsKey='joy-meal-settings-v1';
+const money=value=>'NZ$'+new Intl.NumberFormat('en-NZ',{minimumFractionDigits:2,maximumFractionDigits:2}).format(value);
 export default function Meals() {
- const [checked,setChecked] = useState([]);
- const [ready,setReady] = useState(false);
- const [storageError,setStorageError] = useState(false);
- const [plan,setPlan] = useState(null);
- const [pantry,setPantry] = useState('');
- const [preferences,setPreferences] = useState('');
- const [sitePassword,setSitePassword] = useState('');
- const [busy,setBusy] = useState(false);
- const [error,setError] = useState('');
- const [message,setMessage] = useState('');
- useEffect(()=>{try{const stored=JSON.parse(localStorage.getItem(key)||'[]');if(Array.isArray(stored))setChecked(stored.filter(x=>typeof x==='string')); const saved=JSON.parse(localStorage.getItem(planKey)||'null');if(validPlan(saved))setPlan(saved);}catch{setStorageError(true);}setReady(true);},[]);
- useEffect(()=>{if(ready)try{localStorage.setItem(key,JSON.stringify(checked));}catch{setStorageError(true);}},[checked,ready]);
- useEffect(()=>{if(ready)try{if(plan)localStorage.setItem(planKey,JSON.stringify(plan));else localStorage.removeItem(planKey);}catch{setStorageError(true);}},[plan,ready]);
- function toggle(item){setChecked(previous=>previous.includes(item)?previous.filter(x=>x!==item):[...previous,item]);}
- async function generate(event) {
-  event.preventDefault(); if(busy)return; setBusy(true);setError('');setMessage('Planning 21 meals and combining your shopping list. This may take a minute or two.');
-  try {
-   const response=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${sitePassword}`},body:JSON.stringify({pantry,preferences}),signal:AbortSignal.timeout(150000)});
-   const result=await response.json();if(!response.ok)throw new Error(result.error||'Meal generation failed. Please try again.');
-   if(!validPlan(result.plan))throw new Error('The agent returned an incomplete plan. Your current plan is still saved; please try again.');
-   setPlan(result.plan);setChecked([]);setMessage('Your new weekly plan is ready. Open each recipe to see ingredients and steps.');setSitePassword('');
-  } catch(error) {setMessage('');setError(error.name==='TimeoutError'?'The request took too long. Please try again.':error instanceof TypeError?'Cannot reach your cooking agent right now. Please try again shortly.':error.message);}
-  finally {setBusy(false);}
- }
- const meals=plan ? plan.days.map(day=>[day.day,day.breakfast.title,day.lunch.title,day.dinner.title,day.breakfast.activeMinutes+day.lunch.activeMinutes+day.dinner.activeMinutes]) : starterMeals;
- const groceries=plan ? plan.shopping.reduce((groups,group)=>({...groups,[group.category]:[...(groups[group.category]||[]),...group.items.map(item=>`${item.name} — ${item.quantity}`)]}),{}) : starterGroceries;
- const total=Object.values(groceries).flat().length;
- return <><header><a className="logo" href="/">Joy<span>.</span></a><nav><a href="/">About Joy</a><a href="#shopping">Shopping list</a><a href="/opportunities">Opportunities</a></nav></header><main className="meal-planner"><p className="eyebrow">A little joy in the kitchen</p><h1>Your week,<br/><span>on a plate.</span></h1><p className="intro">Breakfast, lunch and dinner for four. A mix of flavours, shared ingredients and less everyday planning.</p><div className="meal-settings"><span>4 people</span><span>NZ$500 weekly budget</span><span>No allergies</span><span>Up to 45 min cooking / day</span></div><section className="agent-panel" aria-labelledby="agent-title"><h2 id="agent-title">Plan with your cooking assistant</h2><p>Tell me what is in your kitchen and what you feel like eating. I will plan three meals a day for four, using your NZ$500 budget.</p><form onSubmit={generate}><label htmlFor="pantry">Ingredients you already have</label><textarea id="pantry" maxLength={3000} rows={3} value={pantry} onChange={event=>setPantry(event.target.value)} placeholder="For example: rice, six eggs, carrots, chicken in the freezer" disabled={busy}/><label htmlFor="preferences">Anything you would like this week?</label><textarea id="preferences" maxLength={1000} rows={2} value={preferences} onChange={event=>setPreferences(event.target.value)} placeholder="For example: two vegetarian dinners, more Korean food, easy lunches" disabled={busy}/><label htmlFor="access-code">Your private site password</label><input id="access-code" type="password" autoComplete="off" minLength={12} maxLength={256} required value={sitePassword} onChange={event=>setSitePassword(event.target.value)} disabled={busy} aria-describedby="code-help"/><p id="code-help" className="shopping-note">Enter your site password to generate a plan. Your password is not saved in this browser.</p><button className="button" type="submit" disabled={busy||!ready}>{busy?"Planning your week…":"Generate a new weekly plan"}</button><p className="agent-message" role="status">{message}</p>{error&&<p className="agent-error" role="alert">{error}</p>}</form></section><section aria-labelledby="menu-title"><h2 id="menu-title">This week’s menu</h2><p>Cooking times are estimates of total active time each day. {plan ? "This is your AI-generated plan, saved in this browser." : "This is your starter plan."}</p>{plan&&<p className="budget-estimate">Estimated shopping total: <strong>NZ${plan.estimatedTotalNZD.toFixed(2)}</strong> / NZ$500. Estimates are not live supermarket prices.</p>}<div className="meal-grid">{meals.map(([day,breakfast,lunch,dinner,time])=><article className="meal-day" key={day}><div className="meal-day-heading"><h3>{day}</h3><span>{time} min</span></div><dl><dt>Breakfast</dt><dd>{breakfast}{plan&&<Recipe meal={plan.days.find(item=>item.day===day).breakfast}/>}</dd><dt>Lunch</dt><dd>{lunch}{plan&&<Recipe meal={plan.days.find(item=>item.day===day).lunch}/>}</dd><dt>Dinner</dt><dd>{dinner}{plan&&<Recipe meal={plan.days.find(item=>item.day===day).dinner}/>}</dd></dl></article>)}</div></section><section className="meal-shopping" id="shopping"><h2>One shopping list</h2><p>Approximate quantities include planned leftovers. Check your cupboards first. NZ$500 is your spending limit; this list is not a priced grocery quote.</p><div className="shopping-actions"><p aria-live="polite">{checked.filter(item=>Object.values(groceries).flat().includes(item)).length} of {total} items checked</p><button onClick={()=>setChecked([])} disabled={!ready||!checked.length}>Reset checklist</button><button onClick={()=>window.print()}>Print plan & list</button></div><p className="shopping-note">{storageError?'Your browser cannot save this checklist. Your checks work for this visit.':'Your checks are saved in this browser, on this device.'}</p><div className="shopping-grid">{Object.entries(groceries).map(([category,items])=><fieldset key={category}><legend>{category}</legend>{items.map(item=><label className={checked.includes(item)?'shopping-item is-checked':'shopping-item'} key={item}><input type="checkbox" checked={checked.includes(item)} disabled={!ready} onChange={()=>toggle(item)}/><span>{item}</span></label>)}</fieldset>)}</div></section><section className="closing"><h2>Cook once. Enjoy twice.</h2>{plan?<ul>{plan.prepNotes.map((note,index)=><li key={index}>{note}</li>)}</ul>:<p>Make six portions of Monday’s chicken and eight portions of Wednesday’s curry and Friday’s bolognese. Reserve the extras for the lunches in the plan.</p>}</section></main><footer><span>Joy’s cooking planner</span><a href="/">Back to my website</a></footer></>;
+  const [checked,setChecked]=useState([]),[ready,setReady]=useState(false),[storageError,setStorageError]=useState(false),[plan,setPlan]=useState(null);
+  const [budget,setBudget]=useState('500'),[familySize,setFamilySize]=useState('4'),[coverage,setCoverage]=useState('all');
+  const [cookingMinutes,setCookingMinutes]=useState('45');
+  const [pantry,setPantry]=useState(''),[preferences,setPreferences]=useState(''),[sitePassword,setSitePassword]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
+  const chosen={budgetNZD:Number(budget),familySize:Number(familySize),coverage,cookingMinutes:Number(cookingMinutes)};
+  const applied=plan?normalizeMealSettings(plan):DEFAULT_MEAL_SETTINGS;
+  const changed=chosen.budgetNZD!==applied.budgetNZD||chosen.familySize!==applied.familySize||chosen.coverage!==applied.coverage||chosen.cookingMinutes!==applied.cookingMinutes;
+  const summary=plan?budgetSummary(plan.shopping.flatMap(group=>group.items).reduce((sum,item)=>sum+item.estimatedNZD,0),applied.budgetNZD):null;
+  useEffect(()=>{
+    try {
+      const checks=JSON.parse(localStorage.getItem(checklistKey)||'[]');if(Array.isArray(checks))setChecked(checks.filter(item=>typeof item==='string'));
+      const saved=JSON.parse(localStorage.getItem(planKey)||'null');if(validPlan(saved))setPlan(saved);
+      const settings=normalizeMealSettings(JSON.parse(localStorage.getItem(settingsKey)||'null')||(validPlan(saved)?saved:DEFAULT_MEAL_SETTINGS));
+      setBudget(String(settings.budgetNZD));setFamilySize(String(settings.familySize));setCoverage(settings.coverage);
+      setCookingMinutes(String(settings.cookingMinutes));
+    }catch{setStorageError(true);}setReady(true);
+  },[]);
+  useEffect(()=>{if(ready)try{localStorage.setItem(checklistKey,JSON.stringify(checked));}catch{setStorageError(true);}},[checked,ready]);
+  useEffect(()=>{if(ready)try{if(plan)localStorage.setItem(planKey,JSON.stringify(plan));}catch{setStorageError(true);}},[plan,ready]);
+  useEffect(()=>{
+    if(!ready)return;let settings;try{settings=normalizeMealSettings(chosen);}catch{return;}
+    try{localStorage.setItem(settingsKey,JSON.stringify(settings));}catch{setStorageError(true);}
+  },[budget,familySize,coverage,cookingMinutes,ready]);
+  async function generate(event) {
+    event.preventDefault();if(busy)return;setError('');let settings;
+    try{settings=normalizeMealSettings(chosen);}catch(e){setError(e.message);return;}
+    setBusy(true);setMessage(`Planning ${settings.coverage==='dinners'?'7 dinners':'21 meals'} for ${settings.familySize} people and recalculating your shopping list. This may take a minute or two.`);
+    try {
+      const response=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${sitePassword}`},body:JSON.stringify({pantry,preferences,...settings}),signal:AbortSignal.timeout(150000)});
+      const result=await response.json();if(!response.ok)throw new Error(result.error||'Meal generation failed.');
+      if(!validPlan(result.plan)||['budgetNZD','familySize','coverage','cookingMinutes'].some(key=>result.plan[key]!==settings[key]))throw new Error('The agent returned a plan that does not match your settings. Your current plan is unchanged.');
+      setPlan(result.plan);setChecked([]);setSitePassword('');setMessage(result.plan.overBudget?'Your plan is ready, but its estimated cost exceeds your budget. See the warning below.':'Your updated plan and shopping list are ready.');
+    }catch(e){setMessage('');setError(e.name==='TimeoutError'?'The request took too long. Your current plan is unchanged. Please try again.':e instanceof TypeError?'Cannot reach your cooking agent. Your current plan is unchanged.':e.message);}
+    finally{setBusy(false);}
+  }
+  const groceries=plan?plan.shopping.map(group=>({category:group.category,items:group.items.map(item=>({...item,label:`${item.name} — ${item.quantity}`}))})):Object.entries(starterGroceries).map(([category,items])=>({category,items:items.map(label=>({label}))}));
+  const allItems=groceries.flatMap(group=>group.items.map(item=>item.label));
+  function toggle(label){setChecked(items=>items.includes(label)?items.filter(item=>item!==label):[...items,label]);}
+  return <><header><a className="logo" href="/">Joy<span>.</span></a><nav><a href="/">About Joy</a><a href="#shopping">Shopping list</a><a href="/opportunities">Opportunities</a></nav></header>
+    <main className="meal-planner meal-look-dark">
+      <section className="meal-intro"><div className="meal-intro-copy"><p className="eyebrow">A little joy in the kitchen</p><h1>Your week,<br/><span>on a plate.</span></h1><p className="intro">A mix of flavours, shared ingredients and less everyday planning. Choose your family size, weekly budget and meals to plan.</p></div>
+        <div className="meal-banner"><Image src="/meal-banner.avif" alt="A collage of different foods for meal inspiration" fill sizes="(max-width: 760px) 100vw, 1120px" preload style={{objectFit:'cover'}}/></div>
+      </section>
+      <section className="agent-panel" aria-labelledby="agent-title"><h2 id="agent-title">Plan with your cooking assistant</h2><p>Update your settings to regenerate the meals, ingredient quantities and shopping list together.</p>
+        <form onSubmit={generate}><div className="meal-budget-controls">
+          <div><label htmlFor="weekly-budget">Weekly budget (NZD)</label><input id="weekly-budget" type="number" min="1" max="10000" step="0.01" inputMode="decimal" required value={budget} onChange={e=>setBudget(e.target.value)} disabled={busy}/></div>
+          <div><label htmlFor="family-size">Family size</label><input id="family-size" type="number" min="1" max="20" step="1" required value={familySize} onChange={e=>setFamilySize(e.target.value)} disabled={busy}/></div>
+          <div><label htmlFor="meal-coverage">Budget covers</label><select id="meal-coverage" value={coverage} onChange={e=>setCoverage(e.target.value)} disabled={busy}><option value="all">All meals — breakfast, lunch & dinner</option><option value="dinners">Dinners only</option></select></div>
+          <div><label htmlFor="cooking-time">Cooking time (minutes per day)</label><input id="cooking-time" type="number" min="5" max="240" step="1" required value={cookingMinutes} onChange={e=>setCookingMinutes(e.target.value)} disabled={busy}/></div>
+        </div><p className="shopping-note">Cooking time means active preparation for all selected meals that day, excluding oven or simmering time. {storageError?'Browser storage is unavailable; settings work for this visit.':'Settings and plans are saved in this browser on this device.'}</p>
+          {changed&&<p role="status" className="shopping-note">Settings changed. Click “Update meal plan” to apply them; the menu and shopping list below still use the previous settings.</p>}
+          <label htmlFor="pantry">Ingredients you already have</label><textarea id="pantry" maxLength={3000} rows={3} value={pantry} onChange={e=>setPantry(e.target.value)} placeholder="For example: rice, six eggs, carrots, chicken in the freezer" disabled={busy}/>
+          <label htmlFor="preferences">Anything you would like this week?</label><textarea id="preferences" maxLength={1000} rows={2} value={preferences} onChange={e=>setPreferences(e.target.value)} placeholder="For example: two vegetarian dinners, more Korean food" disabled={busy}/>
+          <label htmlFor="access-code">Your private site password</label><input id="access-code" type="password" autoComplete="current-password" minLength={12} maxLength={256} required value={sitePassword} onChange={e=>setSitePassword(e.target.value)} disabled={busy}/><p className="shopping-note">Your password is not saved in this browser.</p>
+          <button className="button" type="submit" disabled={busy||!ready}>{busy?'Updating your meal plan…':'Update meal plan'}</button><p className="agent-message" role="status">{message}</p>{error&&<p className="agent-error" role="alert">{error}</p>}
+        </form>
+      </section>
+      <section aria-labelledby="menu-title"><h2 id="menu-title">This week’s menu</h2><p>Cooking times are estimates of active time each day. {plan?'Your generated plan is saved in this browser.':'The starter plan covers all meals for four people; update it to apply your choices.'}</p>
+        {summary&&<><p className="budget-estimate">Estimated shopping total: <strong>{money(summary.estimatedTotalNZD)}</strong> / {money(applied.budgetNZD)} for {applied.coverage==='dinners'?'dinners only':'all meals'}. Prices are estimates, not live supermarket quotes.</p>{summary.overBudget&&<p role="alert" className="agent-error">Over budget by <strong>{money(summary.overBudgetNZD)}</strong>. Increase the budget or adjust your preferences and update the meal plan.</p>}</>}
+        <div className="meal-grid">{(plan?plan.days:starterMeals.map(([day,breakfast,lunch,dinner,time])=>({day,breakfast:{title:breakfast},lunch:{title:lunch},dinner:{title:dinner},time}))).map(day=><article className="meal-day" key={day.day}><div className="meal-day-heading"><h3>{day.day}</h3><span>{plan?mealSlots(applied.coverage).reduce((sum,slot)=>sum+day[slot].activeMinutes,0):day.time} min</span></div><dl>{mealSlots(applied.coverage).map(slot=><div key={slot}><dt>{slot}</dt><dd>{day[slot].title}{plan&&<Recipe meal={day[slot]} familySize={applied.familySize}/>}</dd></div>)}</dl></article>)}</div>
+      </section>
+      <section className="meal-shopping" id="shopping"><h2>One shopping list</h2><p>Quantities cover {applied.coverage==='dinners'?'the seven dinners':'all planned meals'} for {applied.familySize} people, including planned leftovers. Check your cupboards first. All prices are estimates and may differ at checkout.</p><div className="shopping-actions"><p aria-live="polite">{checked.filter(item=>allItems.includes(item)).length} of {allItems.length} items checked</p><button onClick={()=>setChecked([])} disabled={!ready||!checked.length}>Reset checklist</button><button onClick={()=>window.print()}>Print plan & list</button></div><p className="shopping-note">{storageError?'Your browser cannot save your checklist.':'Your checks are saved in this browser, on this device.'}</p><div className="shopping-grid">{groceries.map(group=><fieldset key={group.category}><legend>{group.category}</legend>{group.items.map(item=><label className={checked.includes(item.label)?'shopping-item is-checked':'shopping-item'} key={item.label}><input type="checkbox" checked={checked.includes(item.label)} disabled={!ready} onChange={()=>toggle(item.label)}/><span>{item.label}{Number.isFinite(item.estimatedNZD)&&<small className="shopping-price">Estimated {money(item.estimatedNZD)}</small>}</span></label>)}</fieldset>)}</div></section>
+      <section className="closing"><h2>Cook once. Enjoy twice.</h2>{plan?<ul>{plan.prepNotes.map((note,index)=><li key={index}>{note}</li>)}</ul>:<p>Make extra portions where the starter plan calls for leftovers. Reserve them for the lunches in the plan.</p>}</section>
+    </main><footer><span>Joy’s cooking planner</span><a href="/">Back to my website</a></footer></>;
 }
-
-function Recipe({meal}) { return <details className="meal-recipe"><summary>Recipe for 4</summary><p>{meal.activeMinutes} min active cooking</p><h4>Ingredients</h4><ul>{meal.ingredients.map((item,index)=><li key={index}>{item}</li>)}</ul><h4>Steps</h4><ol>{meal.steps.map((step,index)=><li key={index}>{step}</li>)}</ol></details>; }
+function Recipe({meal,familySize}) {return <details className="meal-recipe"><summary>Recipe for {familySize}</summary><p>{meal.activeMinutes} min active cooking</p><h4>Ingredients</h4><ul>{meal.ingredients.map((item,index)=><li key={index}>{item}</li>)}</ul><h4>Steps</h4><ol>{meal.steps.map((step,index)=><li key={index}>{step}</li>)}</ol></details>;}
