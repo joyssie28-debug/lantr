@@ -11,6 +11,7 @@ export function validPlan(plan) {
       for(const slot of mealSlots(settings.coverage)){
         const meal=day[slot];if(!meal||typeof meal.title!=='string'||!Number.isInteger(meal.activeMinutes)||meal.activeMinutes<0||!Array.isArray(meal.ingredients)||!meal.ingredients.length||!meal.ingredients.every(item=>typeof item==='string')||!Array.isArray(meal.steps)||!meal.steps.length||!meal.steps.every(item=>typeof item==='string'))return false;
         minutes+=meal.activeMinutes;
+        if(settings.maxPrepMinutes!==null&&meal.activeMinutes>settings.maxPrepMinutes)return false;
       }
       if(minutes>settings.cookingMinutes)return false;
     }

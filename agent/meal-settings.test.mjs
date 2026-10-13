@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {normalizeMealSettings,budgetSummary} from './meal-settings.mjs';
-import {validateRequest,validatePlan,createPlanSchema,createHandler,DAYS} from './server.mjs';
+import {validateRequest,validatePlan,createPlanSchema,createHandler,planInstructions,DAYS} from './server.mjs';
 import {validPlan} from '../app/meals/plan-state.mjs';
 const secret='test-family-agent-secret';
 function plan(coverage,price=100) {
@@ -10,7 +10,7 @@ function plan(coverage,price=100) {
   return {days:DAYS.map(day=>({day,...Object.fromEntries(slots.map(slot=>[slot,{title:slot+' meal',activeMinutes:10,ingredients:['Rice 200 g'],steps:['Cook and serve.']}]))})),shopping:[{category:'Grains',items:[{name:'Rice',quantity:'2 kg',estimatedNZD:price}]}],prepNotes:['Prices are estimates.']};
 }
 test('defaults preserve the existing family plan and invalid settings are rejected',()=>{
-  assert.deepEqual(normalizeMealSettings(),{budgetNZD:500,familySize:4,coverage:'all',cookingMinutes:45});
+  assert.deepEqual(normalizeMealSettings(),{budgetNZD:500,familySize:4,coverage:'all',cookingMinutes:45,maxPrepMinutes:null,dietaryRequirements:[],allergies:[]});
   for(const value of [{budgetNZD:0},{budgetNZD:-1},{budgetNZD:10001},{budgetNZD:1.111},{budgetNZD:'50'},{familySize:0},{familySize:2.5},{familySize:21},{coverage:'lunch'}])assert.throws(()=>validateRequest(value));
   assert.equal(validateRequest({budgetNZD:100.25,familySize:2,coverage:'dinners'}).budgetNZD,100.25);
 });
@@ -32,6 +32,23 @@ test('custom cooking time controls the schema and validation and survives saved 
   assert.throws(()=>validatePlan(plan('all'),{cookingMinutes:20}),error=>error.code==='daily_time'&&error.evidence.limit===20);
   const dinner=plan('dinners');dinner.days.forEach(day=>{day.dinner.activeMinutes=60;});
   const saved=validatePlan(dinner,{coverage:'dinners',cookingMinutes:90});assert.equal(saved.cookingMinutes,90);assert.ok(validPlan(saved));
+});
+test('diet and allergy inputs normalize and generation includes all restrictions',()=>{
+  const settings=validateRequest({dietaryRequirements:['gluten-free','vegetarian','vegetarian'],allergies:[' Peanuts ','milk','Milk'],maxPrepMinutes:15});
+  assert.deepEqual(settings.dietaryRequirements,['gluten-free','vegetarian']);assert.deepEqual(settings.allergies,['milk','peanuts']);
+  assert.match(planInstructions(settings),/gluten-free, vegetarian/);assert.match(planInstructions(settings),/milk, peanuts/);assert.match(planInstructions(settings),/preparation per meal: 15 minutes/);
+  for(const input of [{dietaryRequirements:['unknown']},{allergies:'peanuts'},{allergies:['']},{maxPrepMinutes:0}])assert.throws(()=>validateRequest(input));
+  const schema=createPlanSchema('all',90,15).properties.days.items.properties;for(const slot of ['breakfast','lunch','dinner'])assert.ok(schema[slot].properties.activeMinutes.maximum<=15);
+});
+test('obvious forbidden ingredients and excess preparation time are rejected',()=>{
+  const chicken=plan('dinners');chicken.days[0].dinner.ingredients=['Chicken breast 300 g'];
+  assert.throws(()=>validatePlan(chicken,{coverage:'dinners',dietaryRequirements:['vegetarian']}),error=>error.code==='dietary_requirement');
+  const nuts=plan('dinners');nuts.shopping[0].items[0].name='Peanuts';
+  assert.throws(()=>validatePlan(nuts,{coverage:'dinners',allergies:['peanuts']}),error=>error.code==='dietary_requirement');
+  const flour=plan('dinners');flour.days[0].dinner.ingredients=['Wheat flour 200 g'];
+  assert.throws(()=>validatePlan(flour,{coverage:'dinners',dietaryRequirements:['gluten-free']}),error=>error.code==='dietary_requirement');
+  flour.days[0].dinner.ingredients=['Gluten-free flour 200 g','Coconut milk 100 ml'];assert.ok(validatePlan(flour,{coverage:'dinners',dietaryRequirements:['gluten-free','dairy-free']}));
+  assert.throws(()=>validatePlan(plan('dinners'),{coverage:'dinners',maxPrepMinutes:5}),error=>error.code==='prep_time');
 });
 test('generation sends selected budget, portions and coverage and recalculates prices each time',async t=>{
   const seen=[];
