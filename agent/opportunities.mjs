@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
 import { update_site } from './update-site.mjs';
+import { loadGuidance, evaluateRules } from './rules.mjs';
 
 const SOURCES = ['ccc.govt.nz','christchurchnz.com','volcan.org.nz','volunteeringcanterbury.org.nz','seek.co.nz','trademe.co.nz','eventfinda.co.nz','sportcanterbury.org.nz','parkrun.co.nz'];
 export const SEARCHES = {
@@ -49,19 +50,22 @@ export async function readSource(candidate,signal) {
   const expiry=page.text.match(/"(?:validThrough|endDate)"\s*:\s*"([^" ]+)"/i)?.[1];
   const specific=/vacanc\w*|volunteer\w*|careers?|jobs?|recruit\w*|running|parkrun|marathon|grant\w*|funding|event\w*|opportunit\w*/i.test(title+' '+new URL(page.url).pathname);
   const links=[...main.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)].map(([,href,label])=>{try{return {url:new URL(decode(href),page.url).href,title:plain(label).slice(0,200)};}catch{return null;}}).filter(item=>item&&item.title&&sourceUrl(item.url)&&/\/opportunities\/[^/?]+|\/job\/\d+/.test(new URL(item.url).pathname)).slice(0,3);
-  return {title,url:page.url,excerpt:excerpt(match?.[0]||content),location,relevant:!!match&&specific,links,expiry:expiry&&Number.isFinite(Date.parse(expiry))?Date.parse(expiry):null};
+  const freeEvidence=content.match(/.{0,100}\b(?:free (?:entry|admission|event|participation|registration)|(?:entry|admission|participation|registration|cost|price)\s*(?:is|:)?\s*free|no (?:entry |registration )?(?:fee|charge)|free of charge)\b.{0,100}/i)?.[0]||null;
+  return {title,url:page.url,excerpt:excerpt(match?.[0]||content),evidence:content.slice(0,14000),freeEvidence,location,relevant:!!match&&specific,links,expiry:expiry&&Number.isFinite(Date.parse(expiry))?Date.parse(expiry):null};
 }
 
-export function createOpportunityJobs({secret=process.env.AGENT_SECRET,search=searchWeb,read=readSource,save=update_site,now=Date.now}={}) {
+export function createOpportunityJobs({secret=process.env.AGENT_SECRET,search=searchWeb,read=readSource,save=update_site,guidance=loadGuidance,evaluate=evaluateRules,now=Date.now}={}) {
   const jobs=new Map(),attempts=new Map();let starts=[];
   const authHash=secret?createHash('sha256').update(secret).digest():null;
   const snapshot=job=>({jobId:job.id,status:job.status,startedAt:job.startedAt,elapsedMs:(job.finishedAt||now())-job.startedAt,events:job.events,results:job.results,ruledOut:job.ruledOut,error:job.error});
   async function run(job) {
     const signal=AbortSignal.any([job.controller.signal,AbortSignal.timeout(120000)]);
     const event=(type,message,extra={})=>{if(!signal.aborted)job.events.push({type,message,at:now(),...extra});};
-    const seen=new Set();let searchesRead=0,pagesRead=0;
+    const seen=new Set();let searchesRead=0,pagesRead=0,ruleChecks=0;
     try {
       job.status='running';
+      const preferences=await guidance({signal});signal.throwIfAborted();
+      event('rules',`Loaded interests.txt and ${preferences.rules.length} saved rules.`);
       for(const query of SEARCHES[job.kind]) {
         signal.throwIfAborted();event('search','Searching', {query});let candidates;
         try { candidates=await search(query,signal);searchesRead++;event('search_complete',`Found ${candidates.length} candidates`,{query}); }
@@ -74,7 +78,8 @@ export function createOpportunityJobs({secret=process.env.AGENT_SECRET,search=se
           try {
             const page=await read(candidate,signal);signal.throwIfAborted();pagesRead++;
             if(candidates.length<10&&page.links?.length){candidates.push(...page.links.slice(0,10-candidates.length));event('discovery','Discovered opportunity links on this source',{url:page.url});}
-            const reason=!page.location?'Christchurch or Canterbury relevance was not established.':!page.relevant?'No opportunity or application information found.':page.expiry!==null&&page.expiry<now()?'The source lists an expired closing or event date.':null;
+            let reason=!page.location?'Christchurch or Canterbury relevance was not established.':!page.relevant?'No opportunity or application information found.':page.expiry!==null&&page.expiry<now()?'The source lists an expired closing or event date.':null;
+            if(!reason){try{if(++ruleChecks>24)throw new Error('Rule check limit');const checked=await evaluate(page,preferences,{signal});if(!checked.allowed)reason=checked.reason||'Excluded by your saved rules.';event('rule_check',checked.allowed?'Saved rules satisfied.':reason,{url:page.url});}catch{signal.throwIfAborted();reason='Could not verify this opportunity against your saved rules.';}}
             if(reason){job.ruledOut.push({title:page.title,url:page.url,excerpt:page.excerpt,reason});event('ruled_out',reason,{url:page.url});}
             else {
               const result={title:page.title,url:page.url,excerpt:page.excerpt,note:'Source checked. Confirm dates, availability and eligibility on the source before applying.'};

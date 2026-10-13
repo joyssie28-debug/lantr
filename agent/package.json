@@ -4,5 +4,5 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },
-  "scripts": { "start": "node --env-file-if-exists=.env server.mjs", "check-config": "node --env-file-if-exists=.env check-config.mjs", "test": "node --test server.test.mjs proxy.test.mjs opportunities.test.mjs update-site.test.mjs" }
+  "scripts": { "start": "node --env-file-if-exists=.env server.mjs", "check-config": "node --env-file-if-exists=.env check-config.mjs", "test": "node --test server.test.mjs proxy.test.mjs opportunities.test.mjs update-site.test.mjs rules.test.mjs" }
 }

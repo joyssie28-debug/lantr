@@ -4,7 +4,7 @@ import http from 'node:http';
 import { createOpportunityJobs,sourceUrl,readSource } from './opportunities.mjs';
 import { proxyOpportunity } from '../app/api/opportunities/proxy.js';
 const secret='test-agent-secret-123';
-async function server(t,options={}){const handler=createOpportunityJobs({secret,save:async()=>({saved:true}),...options});const srv=http.createServer(async(req,res)=>{if(!await handler(req,res)){res.writeHead(404);res.end();}});await new Promise(resolve=>srv.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>{srv.close(resolve);srv.closeAllConnections();}));return `http://127.0.0.1:${srv.address().port}/api/opportunities/jobs`;}
+async function server(t,options={}){const handler=createOpportunityJobs({secret,guidance:async()=>({interests:"Christchurch",rules:[]}),save:async()=>({saved:true}),...options});const srv=http.createServer(async(req,res)=>{if(!await handler(req,res)){res.writeHead(404);res.end();}});await new Promise(resolve=>srv.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>{srv.close(resolve);srv.closeAllConnections();}));return `http://127.0.0.1:${srv.address().port}/api/opportunities/jobs`;}
 const headers={Authorization:`Bearer ${secret}`,'Content-Type':'application/json'};
 const candidate={title:'Local volunteering',url:'https://ccc.govt.nz/volunteer'};
 const page={...candidate,excerpt:'Volunteer in Christchurch.',location:true,relevant:true,expiry:null};
@@ -33,6 +33,13 @@ test('only kept sources are saved and save failures preserve returned results',a
  const result=await finished(url,jobId);
  assert.equal(result.status,'completed');assert.equal(saves.length,1);assert.equal(result.results.length,1);assert.equal(saves[0].url,candidate.url);
  assert.ok(result.events.some(event=>event.type==='warning'&&event.message.includes('Could not save')));assert.doesNotMatch(JSON.stringify(result),/secret diagnostics/);
+});
+test('rules load before discovery, blocked opportunities are not saved, rule failures stop jobs',async t=>{
+ let loaded=false,saves=0;
+ const url=await server(t,{guidance:async()=>{loaded=true;return {interests:'Christchurch',rules:[{text:'Free only.'}]};},search:async()=>{assert.equal(loaded,true);return [candidate];},read:async()=>page,evaluate:async()=>({allowed:false,reason:'Cost unknown.'}),save:async()=>{saves++;}});
+ const {jobId}=await(await fetch(url,{method:'POST',headers,body:'{}'})).json();const result=await finished(url,jobId);assert.equal(result.status,'completed');assert.equal(saves,0);assert.equal(result.results.length,0);assert.match(result.ruledOut[0].reason,/Cost unknown/);
+ let searched=false;const failing=await server(t,{guidance:async()=>{throw new Error('Could not read rules.');},search:async()=>{searched=true;return [];}});
+ const start=await(await fetch(failing,{method:'POST',headers,body:'{}'})).json();assert.equal((await finished(failing,start.jobId)).status,'failed');assert.equal(searched,false);
 });
 test('only supported HTTPS source hosts are readable',()=>{
  for(const value of ['http://ccc.govt.nz','https://ccc.govt.nz.evil.test','https://localhost','https://ccc.govt.nz:8080','https://user:password@ccc.govt.nz'])assert.equal(sourceUrl(value),null);
